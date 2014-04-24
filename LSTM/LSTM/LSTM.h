@@ -17,15 +17,25 @@ public:
 	double netCellState;
 	double previousCellState;
 	double cellState;
+	double cellStateError;
 
-	//internal weights
+	//internal weights and deltas
 	double wCellIn;
+	double deltaInputGateCell;
 	double wCellForget;
+	double deltaForgetGateCell;
 	double wCellOut;
+	double deltaOutputGateCell;
+
+	//partial derivatives
+	double dSWCellIn;
+	double dSWCellForget;
+	//double dSWCellState;
 
 	//output gate
 	double netOut;
 	double yOut;
+	double gradientOutputGate;
 
 	//cell output
 	double cellOutput;
@@ -43,6 +53,18 @@ public:
 	double wInputInputGate;
 	double wInputForgetGate;
 	double wInputOutputGate;
+
+	//partial derivatives. dont need partial derivative for output gate as it uses BP not RTRL
+	double dSInputCell;
+	double dSInputInputGate;
+	double dSInputForgetGate;
+
+	//deltas
+	double deltaOutputGateInput;
+	double deltaForgetGateInput;
+	double deltaInputGateInput;
+	double deltaInputCellInput;
+
 
 	//functions
 	LSTMWeight(void);

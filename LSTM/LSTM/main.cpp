@@ -1,38 +1,10 @@
-#include <stdio.h>
-#include <math.h>
-#include <fstream>
-#include <string>
-#include <sstream>
-#include "LSTM.h"
+#include "Header.h"
 
 using namespace std;
 
-//Constants
-const int INPUT = 1;
-const int HIDDEN = 10;
-const int OUTPUT = 1;
-
-//for LSTM layer
-const bool NORMAL = true;
-const bool BIAS = false;
-
-//data input
-const int MAX_LENGTH = 500000;
-int LENGTH = 0;
-double* inputData;
-
-//Layers
-double* inputLayer;
-LSTMWeight** iHWeights;
-LSTMCell* hiddenLayer;
-double** hOWeights;
-double* outputLayer;
-
-//prototypes
-void initialiseNetwork(void);
-void getInputData(void);
-double activationFunctionF(double x);
-double activationFunctionG(double x);
+double learningRate = 0.01;
+double* outputErrorGradients;
+double** deltaHiddenOutput;
 
 int main(void)
 {
@@ -41,6 +13,31 @@ int main(void)
 	//setup
 	getInputData();
 	initialiseNetwork();
+
+	//-------------------------------------------------Check weights---------------------------------------
+	for (int i = 0; i < HIDDEN; i++)
+	{
+		for (int j = 0; j <= INPUT; j++)
+		{
+			cout << "Input-Hidden (" << j << "," << i << ") wInputCell connection is: " << iHWeights[j][i].wInputCell << endl;
+			cout << "Input-Hidden (" << j << "," << i << ") wInputInputGate connection is: " << iHWeights[j][i].wInputInputGate << endl;
+			cout << "Input-Hidden (" << j << "," << i << ") wInputForgetGate connection is: " << iHWeights[j][i].wInputForgetGate << endl;
+			cout << "Input-Hidden (" << j << "," << i << ") wInputOutputGate connection is: " << iHWeights[j][i].wInputOutputGate << endl;
+		}
+		cout << "wCellIn for " << i << " is: " << hiddenLayer[i].wCellIn << endl;
+		cout << "wCellForget for " << i << " is: " << hiddenLayer[i].wCellForget << endl;
+		cout << "wCellOut for " << i << " is: " << hiddenLayer[i].wCellOut << endl;
+	}
+
+	//update weights for hidden to output layer
+	for (int j = 0; j <= HIDDEN; j++)
+	{
+		for (int k = 0; k < OUTPUT; k++)
+		{
+			cout << "Hidden-Output (" << j << "," << k << ") connection is: " << hOWeights[j][k] << endl;			
+		}
+	}
+	//-----------------------------------------------------------------------------------------------------
 
 	//IMPORTANT!!! Make sure when put in loop that previousCellState = cellState
 	//pass data to input neuron
@@ -135,13 +132,192 @@ int main(void)
 		cout << "Output is: " << outputLayer[k] << endl;
 	}
 
-	
+	//put variables for derivaties in weight class and cell class
 
-	//for (int j = 0; j < HIDDEN; j++)
-	//{
-	//	cout << "Value of netCellState in LSTMCell " << j << " is: " << hiddenLayer[j].netCellState << endl;
-	//	cout << "Value of cellOutput in LSTMCell " << j << " is: " << hiddenLayer[j].cellOutput << endl << endl;
-	//}
+	//partial derivatives for cell input
+	for (int i = 0; i < HIDDEN; i++)
+	{
+		for (int j = 0; j <= INPUT; j++)
+		{
+			iHWeights[j][i].dSInputCell = iHWeights[j][i].dSInputCell*hiddenLayer[i].yForget + gPrime(hiddenLayer[i].netCellState)*hiddenLayer[i].yIn*inputLayer[j];
+		}
+	}
+
+	//partial derivatives for input gate
+	for (int i = 0; i < HIDDEN; i++)
+	{
+		for (int j = 0; j <= INPUT; j++)
+		{
+			iHWeights[j][i].dSInputInputGate = iHWeights[j][i].dSInputInputGate*hiddenLayer[i].yForget + activationFunctionG(hiddenLayer[i].netCellState)*fPrime(hiddenLayer[i].netIn)*inputLayer[j];
+		}
+
+		//partial derivatives for internal connections
+		hiddenLayer[i].dSWCellIn = hiddenLayer[i].dSWCellIn*hiddenLayer[i].yForget + activationFunctionG(hiddenLayer[i].netCellState)*fPrime(hiddenLayer[i].netIn)*hiddenLayer[i].cellState;
+	}
+
+	//partial derivatives for forget gate
+	for (int i = 0; i < HIDDEN; i++)
+	{
+		for (int j = 0; j <= INPUT; j++)
+		{
+			//initially this equals zero as the initial dS is zero and the previous cell state is zero
+			iHWeights[j][i].dSInputForgetGate = iHWeights[j][i].dSInputForgetGate*hiddenLayer[i].yForget + hiddenLayer[i].previousCellState*fPrime(hiddenLayer[i].netForget)*inputLayer[j];
+		}
+
+		//partial derivatives for internal connections, initially zero as dS is zero and previous cell state is zero
+		hiddenLayer[i].dSWCellForget = hiddenLayer[i].dSWCellForget*hiddenLayer[i].yForget + hiddenLayer[i].previousCellState*fPrime(hiddenLayer[i].netForget)*hiddenLayer[i].previousCellState;
+	}
+
+	//backward pass
+
+	//create gradient list
+	outputErrorGradients = new(double[OUTPUT]);
+	for (int i = 0; i < OUTPUT; i++) outputErrorGradients[i] = 0;
+
+	//create delta list
+	deltaHiddenOutput = new(double*[HIDDEN+1]);
+	for (int i = 0; i <= HIDDEN; i++)
+	{
+		deltaHiddenOutput[i] = new(double[OUTPUT]);
+		for (int j = 0; j < OUTPUT; j++) deltaHiddenOutput[i][j] = 0;
+	}
+	
+	//for all output neurons
+	for (int k = 0; k < OUTPUT; k++)
+	{
+		//output layer of linear neurons. find the difference between target and output
+		outputErrorGradients[k] = (inputData[1] - outputLayer[k]);
+
+		//for each connection to the hidden layer
+		for (int j = 0; j <= HIDDEN; j++)
+		{
+			deltaHiddenOutput[j][k] += learningRate*hiddenLayer[j].cellOutput*outputErrorGradients[k];
+		}
+	}
+
+	//for each hidden neuron
+	for (int j = 0; j < HIDDEN; j++)
+	{
+		//find the error by find the product of the output errors and their weight connection.
+		double weightedSum = 0;
+		for (int k = 0; k < OUTPUT; k++)
+		{
+			weightedSum += outputErrorGradients[k]*hOWeights[j][k];
+		}
+
+		//using the error find the gradient of the output gate
+		hiddenLayer[j].gradientOutputGate = fPrime(hiddenLayer[j].netOut)*hiddenLayer[j].cellState*weightedSum;
+
+		//internal cell state error
+		hiddenLayer[j].cellStateError = hiddenLayer[j].yOut*weightedSum;
+	}
+	
+	//weight updates
+
+	//already done the deltas for the hidden-output connections
+
+	//output gates. for each connection to the hidden layer
+	for (int i = 0; i < HIDDEN; i++)
+	{
+		//to the input layer
+		for (int j = 0; j <= INPUT; j++)
+		{
+			//make the delta equal to the learning rate multiplied by the gradient multipled by the input for the connection
+			iHWeights[j][i].deltaOutputGateInput = learningRate*hiddenLayer[i].gradientOutputGate*inputLayer[j];
+		}
+
+		//for the internal connection
+		hiddenLayer[i].deltaOutputGateCell = learningRate*hiddenLayer[i].gradientOutputGate*hiddenLayer[i].cellState;
+	}
+
+	//input gates. for each connection from the hidden layer
+	for (int i = 0; i < HIDDEN; i++)
+	{
+		//to the input layer
+		for (int j = 0; j <= INPUT; j++)
+		{
+			//using partial derivative from input to input gate
+			iHWeights[j][i].deltaInputGateInput = learningRate*hiddenLayer[i].cellStateError*iHWeights[j][i].dSInputInputGate;
+		}
+
+		//using internal partial derivative
+		hiddenLayer[i].deltaInputGateCell = learningRate*hiddenLayer[i].cellStateError*hiddenLayer[i].dSWCellIn;
+	}
+
+	//forget gates. for each connection from the hidden layer
+	for (int i = 0; i < HIDDEN; i++)
+	{
+		//to the input layer
+		for (int j = 0; j <= INPUT; j++)
+		{
+			iHWeights[j][i].deltaForgetGateInput = learningRate*hiddenLayer[i].cellStateError*iHWeights[j][i].dSInputForgetGate;
+		}
+		hiddenLayer[i].deltaForgetGateCell = learningRate*hiddenLayer[i].cellStateError*hiddenLayer[i].dSWCellForget;
+	}
+
+	//cell inputs. for each connection from the hidden layer
+	for (int i = 0; i < HIDDEN; i++)
+	{
+		//to the input layer
+		for (int j = 0; j <= INPUT; j++)
+		{
+			iHWeights[j][i].deltaInputCellInput = learningRate*hiddenLayer[i].cellStateError*iHWeights[j][i].dSInputCell;
+		}
+	}
+
+	//updates weights for input to hidden layer
+	for (int i = 0; i < HIDDEN; i++)
+	{
+		for (int j = 0; j <= INPUT; j++)
+		{
+			//update connection weights
+			iHWeights[j][i].wInputCell += iHWeights[j][i].deltaInputCellInput;
+			iHWeights[j][i].wInputInputGate += iHWeights[j][i].deltaInputGateInput;
+			iHWeights[j][i].wInputForgetGate += iHWeights[j][i].deltaForgetGateInput;
+			iHWeights[j][i].wInputOutputGate += iHWeights[j][i].deltaOutputGateInput;
+		}
+
+		//update internal weights
+		hiddenLayer[i].wCellIn += hiddenLayer[i].deltaInputGateCell;
+		hiddenLayer[i].wCellForget += hiddenLayer[i].deltaForgetGateCell;
+		hiddenLayer[i].wCellOut += hiddenLayer[i].deltaOutputGateCell;
+	}
+
+	//update weights for hidden to output layer
+	for (int j = 0; j <= HIDDEN; j++)
+	{
+		for (int k = 0; k < OUTPUT; k++)
+		{
+			hOWeights[j][k] += deltaHiddenOutput[j][k];
+		}
+	}
+
+	cout << endl << endl << "After weight update" << endl << endl;
+
+	//-------------------------------------------------Check weights---------------------------------------
+	for (int i = 0; i < HIDDEN; i++)
+	{
+		for (int j = 0; j <= INPUT; j++)
+		{
+			cout << "Input-Hidden (" << j << "," << i << ") wInputCell connection is: " << iHWeights[j][i].wInputCell << endl;
+			cout << "Input-Hidden (" << j << "," << i << ") wInputInputGate connection is: " << iHWeights[j][i].wInputInputGate << endl;
+			cout << "Input-Hidden (" << j << "," << i << ") wInputForgetGate connection is: " << iHWeights[j][i].wInputForgetGate << endl;
+			cout << "Input-Hidden (" << j << "," << i << ") wInputOutputGate connection is: " << iHWeights[j][i].wInputOutputGate << endl;
+		}
+		cout << "wCellIn for " << i << " is: " << hiddenLayer[i].wCellIn << endl;
+		cout << "wCellForget for " << i << " is: " << hiddenLayer[i].wCellForget << endl;
+		cout << "wCellOut for " << i << " is: " << hiddenLayer[i].wCellOut << endl;
+	}
+
+	//update weights for hidden to output layer
+	for (int j = 0; j <= HIDDEN; j++)
+	{
+		for (int k = 0; k < OUTPUT; k++)
+		{
+			cout << "Hidden-Output (" << j << "," << k << ") connection is: " << hOWeights[j][k] << endl;			
+		}
+	}
+	//-----------------------------------------------------------------------------------------------------
 
 
 
@@ -156,9 +332,19 @@ double activationFunctionG(double x)
 	return (4/(1+exp(-x)))-2;
 }
 
+double gPrime(double x)
+{
+	return 4*activationFunctionF(x)*(1-activationFunctionF(x));
+}
+
 double activationFunctionF(double x)
 {
 	return (1/(1+exp(-x)));
+}
+
+double fPrime(double x)
+{
+	return activationFunctionF(x)*(1-activationFunctionF(x));
 }
 
 void getInputData(void)
@@ -183,7 +369,6 @@ void getInputData(void)
 	infile.close();
 	cout << "Array size: " << LENGTH << endl;
 }
-
 
 void initialiseNetwork(void)
 {
